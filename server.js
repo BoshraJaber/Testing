@@ -1,51 +1,56 @@
 'use strict';
 
-const express = require("express");
-var cors = require('cors')
+const express = require('express');
+
+const cors = require('cors');
+
+require('dotenv').config();
+
+const axios = require('axios');
+
+const pg = require('pg');
+
 const app = express();
-app.use(cors())
-const axios = require("axios");
 
-const dotenv = require('dotenv');
-var cors = require('cors')
-const pg = require("pg");
+app.use(cors());
 
-// const bodyParser = require("body-parser");
-// const jsonParser = bodyParser.json();
-dotenv.config();
-
-const DATABASE_URL = process.env.DATABASE_URL;
-const client = new pg.Client(DATABASE_URL);
-
-
-// const client = new pg.Client({
-//     connectionString: process.env.DATABASE_URL,
-//     ssl: { rejectUnauthorized: false }
-// });
-
-
-const APIKEY = process.env.APIKEY;
 const PORT = process.env.PORT;
-app.use(express.json());
-app.get("/", (req, res) => {
-    return res.status(200).send("Hello World");
-});
 
-app.get("/recipes", getRecipesHandler);
+const apiKey = process.env.APIKEY;
 
-app.get("/searchRecipes", searchRecipesHandler)
+const client = new pg.Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+})
 
-// Endpoint to insert in the database
-// app.post("/addFavRecipe",jsonParser, addFavRecipeHandler)
-app.post("/addFavRecipe", addFavRecipeHandler);
+// const client = new pg.Client(process.env.DATABASE_URL);
 
-//Endpoint to get data from the database
-app.get("/getAllFavRecipes", getAllFavRecipesHandler);
-app.use(errorHandler);
 
-app.use("*", notFountHandler);
+var bodyParser = require('body-parser');
+var jsonParser = bodyParser.json();
 
-function Recipe(title, readyInMinutes, summary, vegetarian, instructions, sourceUrl, image, id){
+app.get('/', helloWorldHandler);
+
+app.get('/recipes', recipesHandler);
+
+app.get('/searchRecipes', searchRecipesHandler);
+
+app.post('/addFavRecipe' ,jsonParser, addFavRecipeHandler);
+
+app.get('/favRecipes', getFavRecipesHandler);
+
+app.get('/favRecipe/:id', getFavRecipeHandler);
+
+app.put('/updateFavRecipe/:id', jsonParser,updateFavRecipeHandler);
+
+app.delete('/deleteFavRecipe/:id', deleteFavRecipeHandler);
+
+app.use('*', notFoundHandler);
+
+app.use(errorHandler)
+
+function Recipe(id, title, readyInMinutes, summary, vegetarian, instructions, sourceUrl, image){
+    this.id = id;
     this.title = title;
     this.readyInMinutes = readyInMinutes;
     this.summary = summary;
@@ -53,86 +58,142 @@ function Recipe(title, readyInMinutes, summary, vegetarian, instructions, source
     this.instructions = instructions;
     this.sourceUrl = sourceUrl;
     this.image = image;
-    this.id = id;
 }
 
-function getRecipesHandler(req,res){
-    let recipes = []
-    axios.get(`https://api.spoonacular.com/recipes/random?apiKey=${APIKEY}&number=10`).then(value => {
-        value.data.recipes.forEach(recipe => {
-            let oneRecipe = new Recipe(recipe.title, recipe.readyInMinutes, recipe.summary, recipe.vegetarian, recipe.instructions, recipe.sourceUrl, recipe.image, recipe.id);
-            recipes.push(oneRecipe);
-            
-        })
 
-        
+
+function helloWorldHandler(req , res){
+    return res.status(200).send("Hello World");
+}
+
+function recipesHandler(req , res){
+    let recipes = []
+    let numberOfReturnedData = 10; // 1 ==> 100
+    axios.get(`https://api.spoonacular.com/recipes/random?apiKey=${apiKey}&number=${numberOfReturnedData}`)
+    .then(result => {
+        result.data.recipes.map(recipe => {
+            let oneRecipe = new Recipe(recipe.id, recipe.title || '', recipe.readyInMinutes || '', recipe.summary || '', recipe.vegetarian , recipe.instructions || '', recipe.sourceUrl || '', recipe.image || '');
+            recipes.push(oneRecipe);
+        })
         return res.status(200).json(recipes);
-    }).catch((error) => {
+    })
+    .catch(error => {
+        
         errorHandler(error, req,res);
     })
-   
-};
-
+}
 
 function searchRecipesHandler(req, res){
-    console.log(req.query);
-    let serachQuery = req.query.search;
-
-    let recipes = [];
-
-    axios.get(`https://api.spoonacular.com/recipes/complexSearch?apiKey=${APIKEY}&query=${serachQuery}`).then(value => {
-        value.data.results.forEach(recipe => {
-            recipes.push(recipe);
+    try{
+        console.log(req.query.search);
+        let recipes = []
+        let query = req.query.search;
+        axios.get(`https://api.spoonacular.com/recipes/complexSearch?apiKey=${apiKey}&query=${query}/`)
+        .then(result => {
+            result.data.results.map(recipe => {
+                let oneRecipe = new Recipe(recipe.id, recipe.title || '', recipe.readyInMinutes || '', recipe.summary || '', recipe.vegetarian , recipe.instructions || '', recipe.sourceUrl || '', recipe.image || '');
+                recipes.push(oneRecipe);
+            })
+            return res.status(200).json(recipes);
         })
+        .catch(error => {
+            console.log(error);
+            errorHandler(error, req,res);
+        });
 
-        return res.status(200).json(recipes);
-    }).catch(error => {
-        errorHandler(error, req,res);
-    })
+    }
+    catch(error){
+
+        errorHandler(error,req,res);
+    }
 }
 
+function addFavRecipeHandler(req, res){
+    const recipe = req.body;
+    console.log(recipe);
+    const sql = `INSERT INTO favRecipes(title, readyInMinutes, summary, vegetarian, instructions, sourceUrl, image, comment) VALUES($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;`
 
-function addFavRecipeHandler(req,res){
-    let recipe = req.body
+    const values = [recipe.title, recipe.readyInMinutes, recipe.summary, recipe.vegetarian, recipe.instructions, recipe.sourceUrl, recipe.image, recipe.comment];
+    client.query(sql,values).then((data) => {
+        res.status(201).json(data.rows);
+    })
+    .catch(error => {
+        console.log(error);
+        errorHandler(error, req,res);
+    });
+};
 
-    const sql = `INSERT INTO favRecipes(title, readInMainutes, summary, vegetarian, instructions, sourceUrl, image, comment) VALUES($1, $2, $3, $4, $5, $6, $7, $8) RETURNING * ;`
+function getFavRecipesHandler(req, res){
 
-    let values = [recipe.title, recipe.readyInMinutes, recipe.summary, recipe.vegetarian, recipe.instructions, recipe.sourceUrl, recipe.image, recipe.comment]
-    
-    client.query(sql, values).then((data) => {
-       
-        return res.status(201).json(data.rows[0]);
-    }).catch(error => {
-        errorHandler(error, req, res);
+    const sql = `SELECT * FROM favRecipes`;
+
+    client.query(sql).then(data => {
+        return res.status(200).json(data.rows);
+    })
+    .catch(error => {
+        errorHandler(error, req,res);
+    });
+};
+
+function getFavRecipeHandler(req,res){
+    const id = req.params.id;
+
+    const sql = `SELECT * FROM favRecipes WHERE id = ${id}`;
+
+    client.query(sql).then(data => {
+        return res.status(200).json(data.rows);
+    })
+    .catch(error => {
+        errorHandler(error, req,res);
+    });
+};
+
+function updateFavRecipeHandler(req, res){
+    const id = req.params.id;
+    const recipe = req.body;
+
+    const sql = `UPDATE favRecipes SET title=$1, readyInMinutes=$2, summary=$3, vegetarian=$4, instructions=$5, sourceUrl=$6, image=$7, comment=$8 WHERE id=${id} RETURNING *;`;
+    const values = [recipe.title, recipe.readyInMinutes, recipe.summary, recipe.vegetarian, recipe.instructions, recipe.sourceUrl, recipe.image, recipe.comment];
+
+    client.query(sql, values).then(data => {
+        return res.status(200).json(data.rows);
+        // or you can send 204 status with no content
+        // return res.status(200).json(data.rows);
+    }).catch( err => {
+        console.log(err);
+        errorHandler(err,req,res);
+    });
+
+};
+
+function deleteFavRecipeHandler(req , res){
+    const id = req.params.id;
+
+    const sql = `DELETE FROM favRecipes WHERE id=${id};`;
+
+    client.query(sql).then(() => {
+        return res.status(204).json({});
+    })
+    .catch(err => {
+        errorHandler(err,req,res);
     })
 };
 
-function getAllFavRecipesHandler(req, res){
-    const sql = `SELECT * FROM favRecipes`;
-    client.query(sql).then(data => {
-        return res.status(200).json(data.rows);
-    }).catch(error => {
-        errorHandler(error, req,res);
-    })
+function notFoundHandler(request,response) { 
+    response.status(404).send('huh????');
 }
 
-function notFountHandler(req,res){
-    res.status(404).send("No endpoint with this name");
-}
-
-function errorHandler(error, req, res){
+function errorHandler(error,req,res){
     const err = {
-        status : 500,
-        message : error
+        status: 500,
+        message: error
     }
+    res.status(500).send(err);
+};
 
-    res.send(err);
-}
-
-
-client.connect().then(() => {
-    
-    app.listen(PORT, () => {
-        console.log(`I am using port ${PORT}`);
-    });
-});
+client.connect()
+.then(()=>{
+    app.listen(PORT, () =>
+    console.log(`listening on ${PORT}`)
+    );
+})
